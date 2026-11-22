@@ -31,3 +31,14 @@ h1 { margin: 0 0 8px; color: var(--glow); font-size: 20px; }
 p { margin: 8px 0; }
 .dim { color: var(--dim); }
 code { color: var(--glow); overflow-wrap: anywhere; }
+
+input {
+  width: 100%;
+  margin: 8px 0;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--edge);
+  font: inherit;
+}
+pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
