@@ -22,6 +22,35 @@
 
       checks = forAllSystems (pkgs: {
         site = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        # The tests under test/, type-checked and run under Node's WebCrypto.
+        tests =
+          pkgs.runCommand "sculk-ui-tests"
+            {
+              src = pkgs.lib.fileset.toSource {
+                root = ./.;
+                fileset = pkgs.lib.fileset.unions [
+                  ./src
+                  ./test
+                  ./tsconfig.json
+                  ./tsconfig.test.json
+                ];
+              };
+              nativeBuildInputs = [
+                pkgs.typescript
+                pkgs.esbuild
+                pkgs.nodejs
+              ];
+            }
+            ''
+              cd $src
+              tsc -p tsconfig.test.json
+              for t in test/*.test.ts; do
+                esbuild "$t" --bundle --platform=node --format=esm --target=es2022 \
+                  --log-level=warning --outfile=$TMPDIR/test.mjs
+                node $TMPDIR/test.mjs
+              done
+              touch $out
+            '';
       });
 
       devShells = forAllSystems (pkgs: {
