@@ -3,9 +3,9 @@
 // code, and connects to it directly with WebRTC.
 //
 // This browser keeps its key (keystore.ts), so a game that remembers it lets
-// it back in without asking. Still to come: remembered servers, and the
-// game's own UI in a sandboxed frame over the data channel. Until then, a connected page offers
-// a message box, which the game echoes.
+// it back in without asking. Once connected, the game's own UI runs in a
+// sandboxed frame (frame.ts), its requests tunneled to the game (tunnel.ts).
+// Still to come: remembered servers.
 
 import { browserKey } from "./keystore";
 import type { Bytes } from "./noise";
@@ -48,6 +48,35 @@ async function completeOffer(pc: RTCPeerConnection): Promise<string> {
     });
   }
   return pc.localDescription!.sdp;
+}
+
+/**
+ * The game's own UI, in a sandboxed frame (frame.html): this page hands it a
+ * MessagePort, and carries what it sends to the data channel and back, so
+ * the UI reaches its game and nothing else.
+ */
+function showGame(channel: RTCDataChannel, status: HTMLElement): void {
+  status.textContent = "Connected. Loading the game's UI…";
+  const frame = el("iframe");
+  frame.title = "sculk";
+  // No allow-same-origin: an opaque origin, away from this page's keys and storage.
+  frame.setAttribute("sandbox", "allow-scripts allow-modals allow-downloads");
+  frame.setAttribute("allow", "clipboard-write");
+  frame.src = "/frame.html";
+  frame.addEventListener("load", () => {
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = (e: MessageEvent) => {
+      if (channel.readyState === "open") channel.send(e.data as ArrayBuffer);
+    };
+    channel.addEventListener("message", (e: MessageEvent) => {
+      const data = e.data as ArrayBuffer;
+      port1.postMessage(data, [data]);
+    });
+    // The frame's origin is opaque, so "*" is the only target that reaches it.
+    frame.contentWindow?.postMessage({ type: "sculk-port" }, "*", [port2]);
+    document.body.classList.add("game");
+  }, { once: true });
+  document.body.append(frame);
 }
 
 async function connect(app: HTMLElement, key: Bytes): Promise<void> {
@@ -93,23 +122,10 @@ async function connect(app: HTMLElement, key: Bytes): Promise<void> {
       status.className = "";
     }
   });
+  channel.binaryType = "arraybuffer";
   channel.addEventListener("open", () => {
     signaling?.close();
-    status.textContent = "Connected.";
-    status.className = "";
-    const log = el("pre");
-    const input = el("input");
-    input.placeholder = "message";
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && input.value !== "") {
-        channel.send(input.value);
-        log.append(`> ${input.value}\n`);
-        input.value = "";
-      }
-    });
-    channel.addEventListener("message", (e) => log.append(`< ${String(e.data)}\n`));
-    app.append(input, log);
-    input.focus();
+    showGame(channel, status);
   });
   channel.addEventListener("close", () => {
     status.textContent = "Disconnected.";

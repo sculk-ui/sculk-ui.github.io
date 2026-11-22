@@ -9,6 +9,7 @@
   esbuild,
   typescript,
   jq,
+  python3,
   relays,
 }:
 stdenvNoCC.mkDerivation {
@@ -28,6 +29,7 @@ stdenvNoCC.mkDerivation {
     esbuild
     typescript
     jq
+    python3
   ];
 
   buildPhase = ''
@@ -39,13 +41,26 @@ stdenvNoCC.mkDerivation {
     tsc -p tsconfig.json
     esbuild src/main.ts --bundle --minify --sourcemap --target=es2022 \
       --legal-comments=none --outfile=dist/shell.js
+    # The sandboxed frame: its loader inline, allowed by hash in its own CSP.
+    esbuild src/frame.ts --bundle --minify --target=es2022 \
+      --legal-comments=none --outfile=frame.js
+    python3 - <<'PY'
+    import base64, hashlib
+    script = open("frame.js").read().rstrip("\n")
+    if "</script" in script.lower():
+        raise SystemExit("frame.js holds </script, which would end the inline script")
+    digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+    page = open("static/frame.html").read()
+    page = page.replace("@frameHash@", "sha256-" + digest).replace("@frameScript@", script)
+    open("dist/frame.html", "w").write(page)
+    PY
     runHook postBuild
   '';
 
   installPhase = ''
     runHook preInstall
     mkdir -p $out
-    cp -r static/. dist/. $out/
+    cp -r static/. dist/. $out/  # dist/frame.html replaces the template
     # For running games, which fetch it (schlarpc/sculk's docs/REMOTE.md).
     cp src/relays.json $out/relays.json
     runHook postInstall

@@ -42,3 +42,9 @@ input {
   font: inherit;
 }
 pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Connected: the game's UI fills the page. */
+iframe { display: none; }
+body.game { display: block; padding: 0; }
+body.game main { display: none; }
+body.game iframe { display: block; position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
