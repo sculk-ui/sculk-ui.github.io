@@ -46,7 +46,7 @@
               tsc -p tsconfig.test.json
               for t in test/*.test.ts; do
                 esbuild "$t" --bundle --platform=node --format=esm --target=es2022 \
-                  --log-level=warning --outfile=$TMPDIR/test.mjs
+                  --loader:.csv=text --log-level=warning --outfile=$TMPDIR/test.mjs
                 node $TMPDIR/test.mjs
               done
               touch $out
