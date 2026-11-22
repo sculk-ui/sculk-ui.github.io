@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <!-- Pages cannot set headers, so the CSP is a meta tag, and it must come before anything it covers.
+       frame-ancestors does not work here; src/main.ts refuses to run in a frame instead. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>sculk</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/shell.js" defer></script>
+</head>
+<body>
+  <!-- Empty until shell.js has checked it is not framed. -->
+  <main id="app"></main>
+</body>
+</html>
