@@ -2,11 +2,13 @@
 // link, meets the game on Nostr relays (signaling.ts), shows the approval
 // code, and connects to it directly with WebRTC.
 //
-// Still to come: remembered browsers and servers, and the game's own UI in a
-// sandboxed frame over the data channel. Until then, a connected page offers
+// This browser keeps its key (keystore.ts), so a game that remembers it lets
+// it back in without asking. Still to come: remembered servers, and the
+// game's own UI in a sandboxed frame over the data channel. Until then, a connected page offers
 // a message box, which the game echoes.
 
-import { type Bytes, generateKeyPair } from "./noise";
+import { browserKey } from "./keystore";
+import type { Bytes } from "./noise";
 import { RELAYS } from "./relays";
 import { BrowserSignaling, type Status } from "./signaling";
 
@@ -55,8 +57,7 @@ async function connect(app: HTMLElement, key: Bytes): Promise<void> {
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
   const channel = pc.createDataChannel("sculk");
   const offer = await completeOffer(pc);
-  // A fresh key per visit for now; remembering this browser comes later.
-  const staticKey = await generateKeyPair(false);
+  const { key: staticKey, kept } = await browserKey();
 
   let signaling: BrowserSignaling | null = null;
   const onStatus = async (s: Status) => {
@@ -67,6 +68,7 @@ async function connect(app: HTMLElement, key: Bytes): Promise<void> {
         status.append("Waiting for approval in game. Check that it shows ");
         status.append(el("code", s.code));
         status.append(".");
+        if (!kept) app.append(el("p", "This browser cannot keep its key here (a private window?), so the game cannot remember it.", "dim"));
         break;
       case "approved":
         status.textContent = "Approved. Connecting…";
