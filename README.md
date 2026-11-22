@@ -39,7 +39,7 @@ more than half of the relays served.
 nix build          # the site, in result/
 nix flake check
 nix develop        # tsc and esbuild, to work on it with --watch
-cp "$(nix build .#relays --print-out-paths)/relays.json" src/   # for tsc while working
+install -m644 "$(nix build .#relays --print-out-paths)/relays.json" src/   # for tsc while working
 ```
 
 Pushes to `main` deploy through `.github/workflows/pages.yml`.

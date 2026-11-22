@@ -65,9 +65,17 @@ export class Signer {
     this.pubkey = toHex(publicKey(secretKey));
   }
 
+  private lastCreatedAt = -Infinity;
+
   /** A signed event on `topic`, as JSON. `aux` is for tests. */
   async event(topic: string, content: string, createdAt: number, aux?: Uint8Array): Promise<string> {
     checkTopic(topic);
+    // An event's id covers its time in seconds but not its signature, and
+    // relays drop an id they have seen: so each event is at least a second
+    // after this signer's last, or a message sent again within a second
+    // would vanish.
+    createdAt = Math.max(createdAt, this.lastCreatedAt + 1);
+    this.lastCreatedAt = createdAt;
     if (!BASE64.test(content)) throw new Error("content must be base64");
     const k = kind(topic);
     const tags = [["x", topic]];
