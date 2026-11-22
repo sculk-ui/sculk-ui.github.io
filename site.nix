@@ -8,6 +8,8 @@
   stdenvNoCC,
   esbuild,
   typescript,
+  jq,
+  relays,
 }:
 stdenvNoCC.mkDerivation {
   pname = "sculk-ui";
@@ -25,10 +27,15 @@ stdenvNoCC.mkDerivation {
   nativeBuildInputs = [
     esbuild
     typescript
+    jq
   ];
 
   buildPhase = ''
     runHook preBuild
+    # The relays (relays.nix): compiled in, and the only places the page may connect to.
+    cp ${relays}/relays.json src/relays.json
+    substituteInPlace static/index.html \
+      --replace-fail @connectSrc@ "$(jq -r '.relays | join(" ")' src/relays.json)"
     tsc -p tsconfig.json
     esbuild src/main.ts --bundle --minify --sourcemap --target=es2022 \
       --legal-comments=none --outfile=dist/shell.js
@@ -39,6 +46,8 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     mkdir -p $out
     cp -r static/. dist/. $out/
+    # For running games, which fetch it (schlarpc/sculk's docs/REMOTE.md).
+    cp src/relays.json $out/relays.json
     runHook postInstall
   '';
 

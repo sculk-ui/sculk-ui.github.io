@@ -23,12 +23,23 @@ The page is also the one piece of hosted code users must trust, so:
 - each deploy's build log lists the SHA-256 of every file served; `nix build`
   here should give the same files.
 
+## Relays
+
+Remote access meets games on public Nostr relays. The list is Trystero's
+curated default (`relays.nix`, from the pinned `trystero` input; only that
+list is used, none of its code). The build compiles it into the page, makes
+it the CSP's `connect-src`, and publishes it as `/relays.json`, which running
+games fetch. `.github/workflows/relays.yml` takes Trystero's latest list
+weekly and deploys it, but refuses a list that is malformed, short, or drops
+more than half of the relays served.
+
 ## Building
 
 ```sh
 nix build          # the site, in result/
 nix flake check
 nix develop        # tsc and esbuild, to work on it with --watch
+cp "$(nix build .#relays --print-out-paths)/relays.json" src/   # for tsc while working
 ```
 
 Pushes to `main` deploy through `.github/workflows/pages.yml`.

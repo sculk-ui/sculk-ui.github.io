@@ -1,0 +1,60 @@
+# Weekly: take Trystero's latest curated Nostr relay list (relays.nix) and,
+# if it changed, commit the bumped flake.lock and deploy. Running games fetch
+# the result from /relays.json.
+#
+# relays.nix refuses a list that is malformed or short. This also refuses one
+# that drops more than half of the relays now served, so a bad upstream
+# change waits for a person (run it by hand once satisfied, or bump by hand).
+name: Relays
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: relays
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: DeterminateSystems/determinate-nix-action@v3
+      - run: nix flake update trystero
+      - id: compare
+        name: Compare with the served list
+        run: |
+          nix build .#relays --print-build-logs
+          curl -fsS https://sculk-ui.github.io/relays.json > "$RUNNER_TEMP/live.json"
+          python3 - "$RUNNER_TEMP/live.json" result/relays.json <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, os, sys
+          live = json.load(open(sys.argv[1]))["relays"]
+          new = json.load(open(sys.argv[2]))["relays"]
+          added = sorted(set(new) - set(live))
+          dropped = sorted(set(live) - set(new))
+          changed = bool(added or dropped)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"changed={'true' if changed else 'false'}\n")
+              out.write(f"summary=+{len(added)} -{len(dropped)}\n")
+          print(f"{len(new)} relays: added {added or 'none'}, dropped {dropped or 'none'}")
+          if len(dropped) * 2 > len(live):
+              sys.exit(f"refusing: drops {len(dropped)} of the {len(live)} relays served")
+          PY
+      - if: steps.compare.outputs.changed == 'true'
+        name: Commit and deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rev=$(jq -r .nodes.trystero.locked.rev flake.lock | cut -c1-7)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Relays: Trystero $rev (${{ steps.compare.outputs.summary }})" flake.lock
+          git push
+          # A push with this token starts no workflows, so start the deploy.
+          gh workflow run pages.yml --ref main

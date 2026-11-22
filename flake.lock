@@ -18,7 +18,24 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "trystero": "trystero"
+      }
+    },
+    "trystero": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1794585817,
+        "narHash": "sha256-OJgk3/ig0XN8lWSJVt59GF4afMxvYv1gEq9dy/P6Bm8=",
+        "owner": "dmotz",
+        "repo": "trystero",
+        "rev": "d0e72da7954c9f920de7df194c37dce4cd92baaf",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dmotz",
+        "repo": "trystero",
+        "type": "github"
       }
     }
   },

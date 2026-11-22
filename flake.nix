@@ -1,10 +1,22 @@
 {
   description = "sculk-ui: the shell that reaches a sculk control server from any browser";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Only for its curated Nostr relay list (relays.nix); none of its code is
+    # used. The weekly relays workflow bumps it.
+    trystero = {
+      url = "github:dmotz/trystero";
+      flake = false;
+    };
+  };
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      trystero,
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -16,9 +28,16 @@
     in
     {
       # The site GitHub Pages serves: `nix build`, then .github/workflows/pages.yml uploads it.
-      packages = forAllSystems (pkgs: {
-        default = pkgs.callPackage ./site.nix { };
-      });
+      packages = forAllSystems (
+        pkgs:
+        let
+          relays = pkgs.callPackage ./relays.nix { inherit trystero; };
+        in
+        {
+          default = pkgs.callPackage ./site.nix { inherit relays; };
+          inherit relays;
+        }
+      );
 
       checks = forAllSystems (pkgs: {
         site = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
@@ -42,7 +61,8 @@
               ];
             }
             ''
-              cd $src
+              cp -r $src/. . && chmod -R u+w .
+              cp ${self.packages.${pkgs.stdenv.hostPlatform.system}.relays}/relays.json src/
               tsc -p tsconfig.test.json
               for t in test/*.test.ts; do
                 esbuild "$t" --bundle --platform=node --format=esm --target=es2022 \
