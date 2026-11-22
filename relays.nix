@@ -20,7 +20,8 @@ runCommand "sculk-relays"
     nativeBuildInputs = [ nodejs ];
     NODE_PATH = "${typescript_5}/lib/node_modules";
     source = "${trystero}/packages/nostr/src/index.ts";
-    rev = trystero.rev or "unknown";
+    # The source link names this commit, so the input must be a pinned one.
+    rev = trystero.rev or (throw "relays: the trystero input has no rev; pin it to a commit");
   }
   ''
     mkdir -p $out
