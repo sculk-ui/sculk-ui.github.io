@@ -41,6 +41,31 @@ input {
   border: 1px solid var(--edge);
   font: inherit;
 }
+button {
+  background: var(--bg);
+  color: var(--glow);
+  border: 1px solid var(--edge);
+  font: inherit;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover, button:focus-visible { border-color: var(--glow); }
+button.small { color: var(--dim); font-size: 13px; padding: 2px 8px; }
+a { color: var(--glow); }
+
+ul.servers { list-style: none; margin: 12px 0; padding: 0; }
+ul.servers li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--edge);
+}
+ul.servers li:first-child { border-top: 0; }
+ul.servers .server { flex: 1 1 100%; text-align: left; overflow-wrap: anywhere; }
+ul.servers .dim { flex: 1; font-size: 13px; }
+
 pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Connected: the game's UI fills the page. */

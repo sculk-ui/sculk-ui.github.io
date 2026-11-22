@@ -37,10 +37,16 @@ function message(stream: number, type: number, data: Uint8Array = new Uint8Array
 }
 
 export class TunnelClient {
-  private next = 1;
+  private next: number;
   private readonly streams = new Map<number, Stream>();
 
-  constructor(private readonly pipe: Pipe) {
+  /**
+   * {@code firstStream}: where this client numbers its streams from. Two
+   * clients can share one channel when their numbers do not meet (the game's
+   * UI from 1, the shell's own from 2^31); each ignores the other's answers.
+   */
+  constructor(private readonly pipe: Pipe, firstStream = 1) {
+    this.next = firstStream;
     pipe.onMessage((m) => this.receive(m));
   }
 
