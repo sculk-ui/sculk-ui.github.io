@@ -8,61 +8,82 @@
 # here, and the site keeps its current one.
 {
   runCommand,
-  nodejs,
-  typescript_5,
+  python3,
   trystero,
 }:
-# Read with TypeScript's own parser: the list is whatever `defaultRelayUrls`
-# is declared as, and anything but a flat array of string literals is refused.
-# typescript_5, since nixpkgs' `typescript` (7.x, the Go port) has no JS API.
+# Read with tree-sitter's TypeScript grammar: the list is whatever the exported
+# `defaultRelayUrls` is declared as, and anything but a flat array of plain
+# string literals is refused. Only that declaration has to parse cleanly; the
+# grammar can lag new TypeScript syntax elsewhere in the file (it doesn't know
+# `export type * from`, for one).
 runCommand "sculk-relays"
   {
-    nativeBuildInputs = [ nodejs ];
-    NODE_PATH = "${typescript_5}/lib/node_modules";
+    nativeBuildInputs = [
+      (python3.withPackages (p: [
+        p.tree-sitter
+        p.tree-sitter-grammars.tree-sitter-typescript
+      ]))
+    ];
     source = "${trystero}/packages/nostr/src/index.ts";
     # The source link names this commit, so the input must be a pinned one.
     rev = trystero.rev or (throw "relays: the trystero input has no rev; pin it to a commit");
   }
   ''
     mkdir -p $out
-    node --input-type=commonjs - <<'JS'
-    const fs = require("fs");
-    const path = require("path");
-    const ts = require("typescript");
-    const fail = (msg) => {
-      console.error("relays: " + msg);
-      process.exit(1);
-    };
+    python3 -I - <<'PY'
+    import json, os, re, sys
+    import tree_sitter, tree_sitter_typescript
 
-    const file = process.env.source;
-    const sf = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
-    if (sf.parseDiagnostics.length) fail("Trystero's packages/nostr doesn't parse");
+    def fail(msg):
+        sys.exit("relays: " + msg)
 
-    const decls = sf.statements
-      .filter(ts.isVariableStatement)
-      .filter((s) => s.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword))
-      .flatMap((s) => s.declarationList.declarations)
-      .filter((d) => ts.isIdentifier(d.name) && d.name.text === "defaultRelayUrls");
-    if (decls.length !== 1) fail("exported defaultRelayUrls not found in Trystero's packages/nostr");
-    const init = decls[0].initializer;
-    if (!init || !ts.isArrayLiteralExpression(init)) fail("defaultRelayUrls isn't an array literal");
-    const urls = init.elements.map((e) => {
-      if (!ts.isStringLiteral(e) && !ts.isNoSubstitutionTemplateLiteral(e))
-        fail("defaultRelayUrls has a non-literal element: " + e.getText(sf));
-      return e.text;
-    });
+    parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_typescript.language()))
+    root = parser.parse(open(os.environ["source"], "rb").read()).root_node
 
-    const plain = /^wss:\/\/[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]+)?\/?$/;
-    const bad = urls.filter((u) => !plain.test(u));
-    if (bad.length) fail("not plain wss:// URLs: " + JSON.stringify(bad));
-    if (new Set(urls).size !== urls.length) fail("duplicates");
-    if (urls.length < 20) fail("only " + urls.length + "; expected at least 20");
+    decls = [
+        d
+        for s in root.named_children
+        if s.type == "export_statement"
+        and (lex := s.child_by_field_name("declaration")) is not None
+        and lex.type == "lexical_declaration"
+        for d in lex.named_children
+        if d.type == "variable_declarator"
+        and d.child_by_field_name("name").text == b"defaultRelayUrls"
+    ]
+    if len(decls) != 1:
+        fail("exported defaultRelayUrls not found in Trystero's packages/nostr")
+    decl = decls[0]
+    if decl.has_error:
+        fail("defaultRelayUrls doesn't parse: " + decl.text.decode())
+    value = decl.child_by_field_name("value")
+    if value is None or value.type != "array":
+        fail("defaultRelayUrls isn't an array literal")
 
-    const doc = {
-      source: "https://github.com/dmotz/trystero/tree/" + process.env.rev + "/packages/nostr",
-      relays: urls,
-    };
-    fs.writeFileSync(path.join(process.env.out, "relays.json"), JSON.stringify(doc, null, 1) + "\n");
-    console.log(urls.length + " relays from Trystero " + process.env.rev);
-    JS
+    urls = []
+    for e in value.named_children:
+        if e.type == "comment":
+            continue
+        parts = [c for c in e.named_children if c.type != "comment"] if e.type == "string" else None
+        if parts is None or len(parts) != 1 or parts[0].type != "string_fragment":
+            fail("defaultRelayUrls has an element that isn't a plain string: " + e.text.decode())
+        urls.append(parts[0].text.decode())
+
+    plain = r"wss://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]+)?/?"
+    bad = [u for u in urls if not re.fullmatch(plain, u)]
+    if bad:
+        fail(f"not plain wss:// URLs: {bad}")
+    if len(set(urls)) != len(urls):
+        fail("duplicates")
+    if len(urls) < 20:
+        fail(f"only {len(urls)}; expected at least 20")
+
+    doc = {
+        "source": "https://github.com/dmotz/trystero/tree/" + os.environ["rev"] + "/packages/nostr",
+        "relays": urls,
+    }
+    with open(os.path.join(os.environ["out"], "relays.json"), "w") as f:
+        json.dump(doc, f, indent=1)
+        f.write("\n")
+    print(f"{len(urls)} relays from Trystero {os.environ['rev']}")
+    PY
   ''
