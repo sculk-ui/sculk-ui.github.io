@@ -5,6 +5,10 @@
 //
 // Every message is stream (u32) || type (u8) || data. Each request is a new
 // stream; several run at once.
+//
+// Requests ask for gzip, and gzipped bodies are decoded here, as they arrive
+// (the game flushes its event streams as it writes them), so the game's UI
+// sees plain responses while the data channel carries a fraction of the bytes.
 
 const REQUEST = 1, REQUEST_BODY = 2, REQUEST_END = 3, CANCEL = 7;
 const RESPONSE = 4, RESPONSE_BODY = 5, RESPONSE_END = 6, ERROR = 8;
@@ -47,6 +51,7 @@ export class TunnelClient {
     if (signal?.aborted) return Promise.reject(new DOMException("aborted", "AbortError"));
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((v, k) => (headers[k] = v));
+    headers["accept-encoding"] ??= "gzip";
     const body =
       init.body === undefined || init.body === null
         ? new Uint8Array(0)
@@ -86,7 +91,8 @@ export class TunnelClient {
     switch (type) {
       case RESPONSE: {
         const head = JSON.parse(new TextDecoder().decode(data)) as { status: number; headers?: Record<string, string> };
-        const body = NULL_BODY.has(head.status)
+        const headers = new Headers(head.headers ?? {});
+        const raw = NULL_BODY.has(head.status)
           ? null
           : new ReadableStream<Uint8Array>({
               start: (c) => {
@@ -96,7 +102,12 @@ export class TunnelClient {
                 if (this.streams.delete(id)) this.pipe.send(message(id, CANCEL));
               },
             });
-        s.resolve(new Response(body, { status: head.status, headers: head.headers ?? {} }));
+        let body: ReadableStream<Uint8Array> | null = raw;
+        if (raw && headers.get("content-encoding") === "gzip") {
+          body = raw.pipeThrough(new DecompressionStream("gzip") as ReadableWritablePair<Uint8Array, Uint8Array>);
+          headers.delete("content-encoding");
+        }
+        s.resolve(new Response(body, { status: head.status, headers }));
         return;
       }
       case RESPONSE_BODY:

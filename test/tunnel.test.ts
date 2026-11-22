@@ -81,6 +81,43 @@ await test("tunnel: a body arrives in pieces, as written", async () => {
   if (second !== "data: 2\n\n" || !(await reader.read()).done) throw new Error(second);
 });
 
+/** gzip of "data: 1\n\n", then "data: 2\n\n", each sync-flushed, as the game sends a batch of events (from Python's zlib). */
+const GZIP_PIECES = [
+  new Uint8Array([31, 139, 8, 0, 0, 0, 0, 0, 0, 3, 74, 73, 44, 73, 180, 82, 48, 228, 226, 2, 0, 0, 0, 255, 255]),
+  new Uint8Array([74, 1, 51, 140, 184, 184, 0, 0, 0, 0, 255, 255]),
+];
+
+await test("tunnel: asks for gzip, and decodes it piece by piece", async () => {
+  const pieces = GZIP_PIECES;
+  let asked = "";
+  let reply2: () => void = () => {};
+  const { pipe } = fakeGame(({ stream, type, data }, reply) => {
+    if (type === REQUEST) asked = (JSON.parse(new TextDecoder().decode(data)) as { headers: Record<string, string> }).headers["accept-encoding"] ?? "";
+    if (type !== REQUEST_END) return;
+    reply(msg(stream, RESPONSE, utf8('{"status":200,"headers":{"content-type":"text/event-stream","content-encoding":"gzip"}}')));
+    reply(msg(stream, RESPONSE_BODY, pieces[0]));
+    reply2 = () => reply(msg(stream, RESPONSE_BODY, pieces[1]));
+  });
+  const r = await new TunnelClient(pipe).fetch("/api/events/stream");
+  if (asked !== "gzip") throw new Error(`asked ${asked}`);
+  if (r.headers.has("content-encoding")) throw new Error("content-encoding left on a decoded body");
+  const reader = r.body!.getReader();
+  // The first piece decodes before the second is even sent: a live stream stays live.
+  const first = new TextDecoder().decode((await reader.read()).value);
+  if (first !== "data: 1\n\n") throw new Error(first);
+  reply2();
+  const second = new TextDecoder().decode((await reader.read()).value);
+  if (second !== "data: 2\n\n") throw new Error(second);
+  await reader.cancel();
+});
+
+await test("tunnel: a caller's own accept-encoding stands", async () => {
+  const client = new TunnelClient(echoGame().pipe);
+  const r = await client.fetch("/api/status", { headers: { "Accept-Encoding": "identity" } });
+  const j = (await r.json()) as { head: { headers: Record<string, string> } };
+  if (j.head.headers["accept-encoding"] !== "identity") throw new Error(JSON.stringify(j.head));
+});
+
 await test("tunnel: no body for 204", async () => {
   const { pipe } = fakeGame(({ stream, type }, reply) => {
     if (type === REQUEST_END) {
