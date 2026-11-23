@@ -3,8 +3,13 @@
 # the result from /relays.json.
 #
 # relays.nix refuses a list that is malformed or short. This also refuses one
-# that drops more than half of the relays now served, so a bad upstream
-# change waits for a person (run it by hand once satisfied, or bump by hand).
+# that drops more than half of the relays now served, adds more than 5 to
+# them, or holds more than 100, so a bad upstream change waits for a person
+# (run it by hand once satisfied, or bump by hand).
+#
+# Two jobs, so that nothing but this file's own script runs with a token that
+# can write: `update` builds and compares with a read-only token and hands
+# the new flake.lock over as an artifact; `commit` commits and pushes it.
 name: Relays
 
 on:
@@ -13,8 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 concurrency:
   group: relays
@@ -23,13 +27,19 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+      summary: ${{ steps.compare.outputs.summary }}
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: DeterminateSystems/determinate-nix-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeterminateSystems/determinate-nix-action@4b040423529d49b1a19ba918742e0aa9aa95031a # v3.24.3
       - run: nix flake update trystero
       - id: compare
         name: Compare with the served list
         run: |
+          # Without this the step would take tee's exit status, and a refusal
+          # below would not fail it.
+          set -o pipefail
           nix build .#relays --print-build-logs
           curl -fsS https://sculk-ui.github.io/relays.json > "$RUNNER_TEMP/live.json"
           python3 - "$RUNNER_TEMP/live.json" result/relays.json <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
@@ -45,16 +55,45 @@ jobs:
           print(f"{len(new)} relays: added {added or 'none'}, dropped {dropped or 'none'}")
           if len(dropped) * 2 > len(live):
               sys.exit(f"refusing: drops {len(dropped)} of the {len(live)} relays served")
+          if len(added) > 5:
+              sys.exit(f"refusing: adds {len(added)} relays to the {len(live)} served")
+          if len(new) > 100:
+              sys.exit(f"refusing: {len(new)} relays is more than 100")
           PY
       - if: steps.compare.outputs.changed == 'true'
-        name: Commit and deploy
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flake-lock
+          path: flake.lock
+          if-no-files-found: error
+          retention-days: 1
+
+  # Runs no action from outside github.com/actions, and nothing from the
+  # artifact but the copy of flake.lock.
+  commit:
+    needs: update
+    if: needs.update.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Not into the checkout: only flake.lock is to come out of the artifact.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flake-lock
+          path: ${{ runner.temp }}/flake-lock
+      - name: Commit and deploy
         env:
           GH_TOKEN: ${{ github.token }}
+          SUMMARY: ${{ needs.update.outputs.summary }}
         run: |
+          cp "$RUNNER_TEMP/flake-lock/flake.lock" flake.lock
           rev=$(jq -r .nodes.trystero.locked.rev flake.lock | cut -c1-7)
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Relays: Trystero $rev (${{ steps.compare.outputs.summary }})" flake.lock
+          git commit -m "Relays: Trystero $rev ($SUMMARY)" flake.lock
           git push
           # A push with this token starts no workflows, so start the deploy.
           gh workflow run pages.yml --ref main
