@@ -3,9 +3,9 @@
 <head>
   <!-- The game's UI runs here, sandboxed by the shell (an opaque origin: no storage, nothing of the shell's).
        site.nix inlines src/frame.ts and puts its hash below: no other script may run but the blob: URLs it makes,
-       and nothing may fetch or load from anywhere; the UI reaches its game only through the shell. (Where the browser
-       knows the webrtc directive, a peer connection cannot be a way out either; elsewhere it still can.) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src '@frameHash@' blob:; style-src 'unsafe-inline' blob:; font-src blob:; img-src blob: data:; connect-src 'none'; webrtc 'block'; base-uri 'none'; form-action 'none'">
+       and nothing may fetch or load from anywhere; the UI reaches its game only through the shell. (A peer connection
+       is not a fetch, and no CSP that browsers honour stops one: a game's UI could send its own game's data out that way.) -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src '@frameHash@' blob:; style-src 'unsafe-inline' blob:; font-src blob:; img-src blob: data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
   <meta charset="utf-8">
   <meta name="color-scheme" content="dark">
   <title>sculk</title>
