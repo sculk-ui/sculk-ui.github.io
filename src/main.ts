@@ -45,7 +45,11 @@ function decodeKey(text: string): Bytes | null {
 
 /** The game's key from the link's fragment, or null. */
 function serverKey(): Bytes | null {
-  return decodeKey(decodeURIComponent(location.hash.slice(1)));
+  try {
+    return decodeKey(decodeURIComponent(location.hash.slice(1)));
+  } catch {
+    return null; // a stray % in the fragment
+  }
 }
 
 function encodeKey(key: Bytes): string {
@@ -166,7 +170,7 @@ function showGame(channel: RTCDataChannel, status: HTMLElement): void {
   const frame = el("iframe");
   frame.title = "sculk";
   // No allow-same-origin: an opaque origin, away from this page's keys and storage.
-  frame.setAttribute("sandbox", "allow-scripts allow-modals allow-downloads");
+  frame.setAttribute("sandbox", "allow-scripts allow-modals");
   frame.setAttribute("allow", "clipboard-write");
   frame.src = "/frame.html";
   frame.addEventListener("load", () => {
@@ -222,9 +226,13 @@ async function connect(app: HTMLElement, key: Bytes, saved?: SavedServer): Promi
       case "pending":
         status.textContent = "";
         status.className = "";
-        status.append("Waiting for approval in game. Check that it shows ");
-        status.append(el("code", s.code));
-        status.append(".");
+        // Typed, not compared: the game lets in the browser whose code it is
+        // given, so it cannot be another one that asked at the same moment.
+        status.append("Waiting for approval. In the game (or its console), type ");
+        status.append(el("code", `/sculk remote accept ${s.code}`));
+        status.append(" to let this browser in once, or ");
+        status.append(el("code", `/sculk remote accept ${s.code} remember`));
+        status.append(" to let it back in without asking. It will then be able to run code in the game.");
         if (!kept) app.append(el("p", "This browser cannot keep its key here (a private window?), so the game cannot remember it.", "dim"));
         break;
       case "approved":
@@ -281,6 +289,11 @@ function main(): void {
   }
   // Keep the key out of the address bar, history and screenshots.
   history.replaceState(null, "", location.pathname);
+  // Another game's link opened in this tab changes only the fragment, which
+  // loads nothing: start over, so the page shows the game the link names.
+  window.addEventListener("hashchange", () => {
+    if (serverKey() !== null) location.reload();
+  });
   connect(app, key).catch((e: unknown) => failed(app, e));
 }
 
