@@ -61,7 +61,12 @@ async function load(port: MessagePort): Promise<void> {
   }
 }
 
-window.addEventListener("message", (e: MessageEvent) => {
+// Only in the shell's sandboxed frame. This file is a public URL, and a meta
+// CSP cannot say frame-ancestors: a page that framed it without the sandbox
+// would be its parent, hand it a port of its own, and have the script it
+// served run with the shell's origin, next to the browser's key. Sandboxed,
+// the origin is opaque ("null"), whoever the parent is.
+if (self.origin === "null") window.addEventListener("message", (e: MessageEvent) => {
   if (e.source !== window.parent || (e.data as { type?: unknown } | null)?.type !== "sculk-port" || !e.ports[0]) return;
   load(e.ports[0]).catch((err: unknown) => {
     document.body.textContent = `The game's UI did not load: ${err instanceof Error ? err.message : String(err)}`;
