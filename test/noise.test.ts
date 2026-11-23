@@ -13,6 +13,8 @@ interface Vector {
   resp_static: string;
   resp_ephemeral: string;
   handshake_hash?: string;
+  /** Split()'s third output, which the vectors' sources do not give: pinned here so that both codebases agree. */
+  secret: string;
   messages: { payload: string; ciphertext: string }[];
 }
 
@@ -70,6 +72,8 @@ await test("published vectors", async () => {
     }
     if (v.handshake_hash !== undefined) equal(hex(v.handshake_hash), init.handshakeHash, v.source);
     equal(init.handshakeHash, resp.handshakeHash, v.source);
+    equal(it!.secret, rt!.secret, `${v.source}: both sides have the secret`);
+    equal(hex(v.secret), it!.secret, `${v.source}: secret`);
     equal(initS.pub, resp.remoteStatic!, `${v.source}: the responder learns the initiator's key`);
   }
 });
@@ -111,6 +115,21 @@ await test("a tampered message fails", async () => {
   const m2 = await resp.writeMessage(new Uint8Array(0));
   m2[40]! ^= 1;
   await rejects(() => init.readMessage(m2), "read");
+});
+
+await test("a false message leaves the handshake able to read the real one", async () => {
+  const server = await generateKeyPair();
+  const init = await NoiseXK.initiator(await generateKeyPair(), server.pub, new Uint8Array(0));
+  const resp = await NoiseXK.responder(server, new Uint8Array(0));
+  await rejects(() => resp.readMessage(new Uint8Array(48)), "false message 1");
+  await resp.readMessage(await init.writeMessage(new Uint8Array(0)));
+  const m2 = await resp.writeMessage(new Uint8Array(0));
+  await rejects(() => init.readMessage(new Uint8Array(48)), "false message 2");
+  await init.readMessage(m2);
+  const m3 = await init.writeMessage(new TextEncoder().encode("offer") as Bytes);
+  await rejects(() => resp.readMessage(new Uint8Array(80)), "false message 3");
+  equal(new TextEncoder().encode("offer") as Bytes, await resp.readMessage(m3), "payload");
+  equal((await init.split()).secret, (await resp.split()).secret, "secret");
 });
 
 await test("small-order keys are refused", async () => {

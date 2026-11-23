@@ -3,7 +3,7 @@
 import { type Bytes, NoiseXK, type Transport, generateKeyPair } from "../src/noise";
 import { Signer, relaysFor, serverTopic } from "../src/nostr";
 import { RelayPool } from "../src/relaypool";
-import { BrowserSignaling, PROLOGUE, type Status, approvalCode, decodeEnvelope, encodeEnvelope } from "../src/signaling";
+import { BrowserSignaling, type Status, approvalCode, decodeEnvelope, encodeEnvelope, prologue } from "../src/signaling";
 import { FakeNet } from "./fakerelays";
 
 const RELAYS = Array.from({ length: 12 }, (_, i) => `wss://r${i}`);
@@ -36,7 +36,7 @@ async function miniGame(net: FakeNet, verdict: "approve" | "pend-then-approve" |
       let s = sessions.get(sidHex);
       if (!s) {
         if (env.n !== 0) return;
-        s = { noise: await NoiseXK.responder(key, PROLOGUE), nextIn: 0, nextOut: 0, last: "" };
+        s = { noise: await NoiseXK.responder(key, prologue(env.sid)), nextIn: 0, nextOut: 0, last: "" };
         sessions.set(sidHex, s);
       }
       // The browser sent its latest again: so may we (this game has no timer).
@@ -50,7 +50,7 @@ async function miniGame(net: FakeNet, verdict: "approve" | "pend-then-approve" |
         const offer = JSON.parse(new TextDecoder().decode(await s.noise.readMessage(env.body))).sdp;
         s.t = await s.noise.split();
         seenKeys.push(toHex(s.noise.remoteStatic!));
-        codes.push(await approvalCode(s.noise.handshakeHash));
+        codes.push(await approvalCode(s.t.secret));
         if (verdict === "deny") return status(env.sid, s, { status: "denied" });
         if (verdict === "pend-then-approve") {
           await status(env.sid, s, { status: "pending" });
@@ -90,7 +90,7 @@ async function test(name: string, f: () => Promise<void>): Promise<void> {
 }
 
 await test("signaling: the approval code matches the game's", async () => {
-  // The cacophony vector's handshake hash; the same value is pinned in Java.
+  // The same code for the same 32 bytes is pinned in Java.
   const code = await approvalCode(hex("4f5a40e425d3adcdb2c715d988e4ef8763ed0f8aa0fe78e2d2879d71b2d38186"));
   if (code !== "144909") throw new Error(code);
 });

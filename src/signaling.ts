@@ -1,15 +1,26 @@
 // The browser's side of remote access signaling (schlarpc/sculk's
 // docs/REMOTE.md; the game's side is GameSignaling.java): a Noise XK
 // handshake with the game in Nostr events, carrying a WebRTC offer, then the
-// game's verdict: pending (with the code both sides show), approved (with
-// its answer), denied or expired.
+// game's verdict: pending (the page then shows the code to type in game),
+// approved (with its answer), denied or expired.
 
 import { type Bytes, type KeyPair, NoiseXK, type Transport } from "./noise";
 import { BROWSER_RELAYS, Signer, relaysFor, serverTopic } from "./nostr";
 import { RelayPool, type SocketFactory } from "./relaypool";
 
-export const PROLOGUE = new TextEncoder().encode("sculk remote v1") as Bytes;
 const SID = 32;
+
+/**
+ * The Noise prologue: "sculk remote v1" || sid. With the sid in it, a first
+ * message someone recorded opens no session under another sid.
+ */
+export function prologue(sid: Bytes): Bytes {
+  const tag = new TextEncoder().encode("sculk remote v1");
+  const out = new Uint8Array(tag.length + SID);
+  out.set(tag, 0);
+  out.set(sid, tag.length);
+  return out;
+}
 /** Publish the latest message again this often until the game answers. */
 export const RESEND_MS = 3000;
 
@@ -49,12 +60,17 @@ export function decodeEnvelope(content: string): Envelope {
   return { sid: b.slice(0, SID), n: b[SID]!, body: b.slice(SID + 1) };
 }
 
-/** The six-digit code both sides show: SHA-256("sculk/v1/code" || h), first four bytes, mod 10^6. */
-export async function approvalCode(handshakeHash: Bytes): Promise<string> {
+/**
+ * The six-digit code this page shows and the player types in game:
+ * SHA-256("sculk/v1/code" || secret), first four bytes, mod 10^6, where
+ * secret is the session's (Transport.secret). Nobody else can compute it, so
+ * nobody else can show it.
+ */
+export async function approvalCode(secret: Bytes): Promise<string> {
   const tag = new TextEncoder().encode("sculk/v1/code");
-  const all = new Uint8Array(tag.length + handshakeHash.length);
+  const all = new Uint8Array(tag.length + secret.length);
   all.set(tag, 0);
-  all.set(handshakeHash, tag.length);
+  all.set(secret, tag.length);
   const d = new DataView(await crypto.subtle.digest("SHA-256", all));
   return String(d.getUint32(0, false) % 1_000_000).padStart(6, "0");
 }
@@ -103,7 +119,7 @@ export class BrowserSignaling {
   static async start(opts: Options): Promise<BrowserSignaling> {
     const s = new BrowserSignaling(opts);
     s.topic = await serverTopic(opts.serverKey);
-    s.noise = await NoiseXK.initiator(opts.staticKey, opts.serverKey, PROLOGUE);
+    s.noise = await NoiseXK.initiator(opts.staticKey, opts.serverKey, prologue(s.sid));
     const ranked = await relaysFor(s.topic, opts.relays);
     s.pool = new RelayPool(ranked, BROWSER_RELAYS, (e) => s.onContent(e.content), opts.socket);
     s.pool.subscribe(s.sidHex);
@@ -146,9 +162,13 @@ export class BrowserSignaling {
     const env = decodeEnvelope(content);
     if (toHex(env.sid) !== this.sidHex || env.n < this.nextIn) return;
     if (env.n > this.nextIn) {
-      if (this.held.size < 4 && !this.held.has(env.n)) this.held.set(env.n, env.body);
+      // The latest copy: an earlier one may have been someone else's.
+      if (env.n - this.nextIn <= 4) this.held.set(env.n, env.body);
       return;
     }
+    // The sid and n are in the clear, so anyone watching can send a false
+    // message for this session. handle() rejects one and changes nothing,
+    // and the real one, sent again, is still read.
     let body: Bytes | undefined = env.body;
     while (body !== undefined && !this.closed) {
       await this.handle(this.nextIn, body);
@@ -165,13 +185,13 @@ export class BrowserSignaling {
       const payload = new TextEncoder().encode(JSON.stringify({ sdp: this.opts.offer })) as Bytes;
       const m3 = await this.noise.writeMessage(payload);
       this.transport = await this.noise.split();
-      this.code = await approvalCode(this.noise.handshakeHash);
+      this.code = await approvalCode(this.transport.secret);
       await this.send(m3);
       return;
     }
+    const text = new TextDecoder().decode(await this.transport!.receive.decrypt(new Uint8Array(0), body));
     // A verdict from the game: it has message 3, so stop sending it.
     clearInterval(this.resend);
-    const text = new TextDecoder().decode(await this.transport!.receive.decrypt(new Uint8Array(0), body));
     const v = JSON.parse(text) as { status?: unknown; sdp?: unknown };
     switch (v.status) {
       case "pending":

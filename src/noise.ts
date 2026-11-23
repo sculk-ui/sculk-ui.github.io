@@ -108,6 +108,16 @@ export class CipherState {
     this.n = 0n;
   }
 
+  /** The key and nonce now, to {@link restore} if a read fails part way. */
+  save(): { key: CryptoKey | null; n: bigint } {
+    return { key: this.key, n: this.n };
+  }
+
+  restore(saved: { key: CryptoKey | null; n: bigint }): void {
+    this.key = saved.key;
+    this.n = saved.n;
+  }
+
   /** AES-GCM's nonce: 32 zero bits, then n big-endian. */
   private nonce(): Bytes {
     if (this.n === 0xffff_ffff_ffff_ffffn) throw new Error("nonce exhausted"); // reserved
@@ -172,10 +182,11 @@ class Symmetric {
   }
 }
 
-/** The ciphers after the handshake. Each direction's nonces count up from 0. */
+/** The ciphers after the handshake (each direction's nonces count up from 0), and the session's secret. */
 export interface Transport {
   readonly send: CipherState;
   readonly receive: CipherState;
+  readonly secret: Bytes;
 }
 
 /**
@@ -256,10 +267,30 @@ export class NoiseXK {
     return out;
   }
 
-  /** Reads the peer's next handshake message and returns its payload; rejects if it does not authenticate. */
+  /**
+   * Reads the peer's next handshake message and returns its payload; rejects
+   * if it does not authenticate. The handshake is then as it was before, and
+   * can still read the real message: anyone can send a false one, since
+   * nothing before this authenticates the sender.
+   */
   async readMessage(message: Bytes): Promise<Bytes> {
     if (this.complete || this.ourTurn) throw new Error(`not our turn to read (step ${this.step})`);
     if (message.length > MAX_MESSAGE) throw new Error(`message over ${MAX_MESSAGE} bytes`);
+    // Every step replaces these and changes none in place.
+    const saved = { ck: this.sym.ck, h: this.sym.h, cs: this.sym.cs.save(), rs: this.rs, re: this.re };
+    try {
+      return await this.read(message);
+    } catch (e) {
+      this.sym.ck = saved.ck;
+      this.sym.h = saved.h;
+      this.sym.cs.restore(saved.cs);
+      this.rs = saved.rs;
+      this.re = saved.re;
+      throw e;
+    }
+  }
+
+  private async read(message: Bytes): Promise<Bytes> {
     let at = 0;
     switch (this.step) {
       case 0: // -> e, es (we are the responder)
@@ -309,12 +340,17 @@ export class NoiseXK {
     return this.sym.h.slice();
   }
 
-  /** The two transport ciphers: ours to send with, and ours to receive with. */
+  /**
+   * The two transport ciphers: ours to send with, and ours to receive with.
+   * Noise's Split() with a third output of the same HKDF: a secret that only
+   * the two sides know, unlike the handshake hash, which anyone who saw the
+   * messages and knows the server's key can compute.
+   */
   async split(): Promise<Transport> {
     if (!this.complete) throw new Error("handshake not complete");
-    const [k1, k2] = await hkdf(this.sym.ck, new Uint8Array(0), 2);
+    const [k1, k2, secret] = await hkdf(this.sym.ck, new Uint8Array(0), 3);
     const c1 = await CipherState.of(k1!);
     const c2 = await CipherState.of(k2!);
-    return this.initiator ? { send: c1, receive: c2 } : { send: c2, receive: c1 };
+    return this.initiator ? { send: c1, receive: c2, secret: secret! } : { send: c2, receive: c1, secret: secret! };
   }
 }
